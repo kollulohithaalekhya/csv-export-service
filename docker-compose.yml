@@ -1,0 +1,34 @@
+services:
+  db:
+    image: postgres:15
+    container_name: csv_db
+    restart: always
+    environment:
+      POSTGRES_USER: exporter
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: exports_db
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./seeds:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U exporter -d exports_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    container_name: csv_app
+    restart: always
+    env_file:
+      - .env.example
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./exports:/app/exports
+
+volumes:
+  db_data:
