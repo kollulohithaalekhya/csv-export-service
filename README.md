@@ -1,22 +1,22 @@
 # CSV Export Service
 
-Production‑ready backend system that generates **large CSV exports (1M+ rows)** asynchronously using **Node.js, PostgreSQL, Docker, and background workers**.
+Production-ready backend system that generates **large CSV exports (1M+ rows)** asynchronously using **Node.js, PostgreSQL, Docker, and background workers**.
 
 ---
 
-# Features
+#  Features
 
-* Dockerized **Node.js + PostgreSQL** stack  
-* Automatic **database seeding with 1,000,000 users**  
-* **Async background worker** for CSV generation  
-* **Memory‑safe streaming** for huge datasets  
-* **Job queue with concurrency control**  
-* **Atomic job locking** using `FOR UPDATE SKIP LOCKED`  
-* **Progress tracking** in database  
-* **Cancelable export jobs**  
-* **Download generated CSV files**  
-* **Health check endpoint**  
-* Production‑ready **error handling & cleanup**
+* Dockerized **Node.js + PostgreSQL** stack
+* Automatic **database seeding with 1,000,000 users**
+* **Async background worker** for CSV generation
+* **Memory-safe streaming** for huge datasets
+* **Job queue with concurrency control**
+* **Atomic job locking** using `FOR UPDATE SKIP LOCKED`
+* **Progress tracking** in database
+* **Cancelable export jobs**
+* **Download generated CSV files**
+* **Health check endpoint**
+* Production-ready **error handling & cleanup**
 
 ---
 
@@ -31,52 +31,59 @@ Client → REST API → PostgreSQL (jobs table)
                     ↓
                  File Download
 ```
+
 ## Architecture
 
 ![System Architecture](./docs/architecture.png)
 
-### Key Concepts
+---
 
-**Async Processing**  
+#  Key Concepts
+
+### Async Processing
+
 Exports run in background so API stays fast.
 
-**Streaming CSV**  
+### Streaming CSV
+
 Rows are written in batches → avoids memory crash with millions of records.
 
-**Atomic Job Claiming**  
+### Atomic Job Claiming
+
 Prevents multiple workers from processing same job.
 
-**Cancelable Jobs**  
+### Cancelable Jobs
+
 Worker checks DB status during processing and stops safely.
 
 ---
 
-# Tech Stack
+# 🛠 Tech Stack
 
-* **Node.js 20**  
-* **Express.js**  
-* **PostgreSQL 15**  
-* **pg (node‑postgres)**  
-* **csv-stringify**  
-* **Docker & Docker Compose**
+* Node.js 20
+* Express.js
+* PostgreSQL 15
+* pg (node-postgres)
+* csv-stringify
+* Docker & Docker Compose
 
 ---
 
-# Project Structure
+#  Project Structure
 
 ```
 src/
  ├── api/            # REST endpoints
  ├── db/             # PostgreSQL connection
- ├── worker/         # Background export worker
- ├── server.js       # Express app entry
+ ├── jobs/           # Background export worker
+ ├── index.js        # Express app entry
 
 seeds/
  ├── 01-schema.sql
  ├── 02-seed.sql
  └── 03-million-users.sql
 
-exports/             # Generated CSV files (Docker volume)
+exports/             # Generated CSV files
 Dockerfile
 docker-compose.yml
 README.md
@@ -84,144 +91,240 @@ README.md
 
 ---
 
-# Setup & Run
+#  Setup & Run
 
-## 1. Clone Repository
+## 1️⃣ Clone Repository
 
 ```bash
 git clone <your-repo-url>
 cd csv-export-service
 ```
 
-## 2. Start with Docker
+---
+
+## 2️⃣ Start System
 
 ```bash
-docker compose up --build
-```
-
-This will:
-
-* Start PostgreSQL  
-* Create schema  
-* Insert **1,000,000 users**  
-* Start API + background worker  
-
----
-
-# API Endpoints
-
-## Health Check
-
-```http
-GET /health
-```
-
-Response:
-
-```json
-{ "status": "ok" }
+docker compose down
+docker compose up --build -d
 ```
 
 ---
 
-## Create Export Job
+## 3️⃣ Verify Containers
 
-```http
-POST /exports
+```bash
+docker compose ps
 ```
 
-Response:
+Expected:
 
-```json
-{
-  "jobId": "uuid",
-  "status": "pending"
-}
+* csv_db → healthy
+* csv_app → running
+
+---
+
+## 4️⃣ Verify Database (1M Users)
+
+```bash
+docker exec -it csv_db psql -U exporter -d exports_db -c "SELECT COUNT(*) FROM users;"
+```
+
+Expected:
+
+```
+1000000
 ```
 
 ---
 
-## Cancel Export
+# 🌐 API Endpoints
 
-```http
-POST /exports/:id/cancel
+### Health Check
+
+```bash
+curl http://localhost:8080/health
 ```
 
-Cancels job **during processing**.
-
 ---
 
-## Download CSV
+### Create Export Job
 
-```http
-GET /exports/:id/download
+```bash
+curl -X POST "http://localhost:8080/exports/csv"
 ```
 
-Returns generated CSV file.
+---
+
+### Get Job Status
+
+```bash
+curl http://localhost:8080/exports/<JOB_ID>/status
+```
 
 ---
 
-# How Background Worker Works
+### Cancel Job
 
-1. Polls database every few seconds  
-2. Atomically locks **one pending job**  
-3. Marks job as **processing**  
-4. Streams users table → CSV in batches  
-5. Updates **progress %** in DB  
-6. Supports **live cancellation**  
-7. Marks job **completed** with file path  
+```bash
+curl -X DELETE http://localhost:8080/exports/<JOB_ID>
+```
 
 ---
 
-# Database Tables
+### Download CSV
 
-## users  
-Stores large dataset for export testing.
-
-## exports  
-Tracks:  
-* job status (`pending | processing | completed | failed | cancelled`)  
-* progress percentage  
-* file path  
-* error message  
+```bash
+curl -o export.csv http://localhost:8080/exports/<JOB_ID>/download
+```
 
 ---
 
-# Docker Details
+#  Testing & Execution (Full Flow)
+
+## 1️⃣ Health Check
+
+```bash
+curl http://localhost:8080/health
+```
+
+---
+
+## 2️⃣ Create Export
+
+```bash
+JOB_ID=$(curl -s -X POST http://localhost:8080/exports/csv | jq -r '.exportId')
+echo $JOB_ID
+```
+
+---
+
+## 3️⃣ Check Status
+
+```bash
+curl http://localhost:8080/exports/$JOB_ID/status
+```
+
+---
+
+## 4️⃣ Download File
+
+```bash
+curl -o export.csv http://localhost:8080/exports/$JOB_ID/download
+```
+
+---
+
+## 5️⃣ Test Filters
+
+```bash
+curl -X POST "http://localhost:8080/exports/csv?country_code=IN"
+```
+
+---
+
+## 6️⃣ Test Column Selection
+
+```bash
+curl -X POST "http://localhost:8080/exports/csv?columns=id,name"
+```
+
+---
+
+## 7️⃣ Cancel Job
+
+```bash
+JOB_ID=$(curl -s -X POST http://localhost:8080/exports/csv | jq -r '.exportId')
+
+curl -X DELETE http://localhost:8080/exports/$JOB_ID
+```
+
+Verify:
+
+```bash
+docker exec -it csv_db psql -U exporter -d exports_db -c "SELECT status FROM exports WHERE id='$JOB_ID';"
+```
+
+---
+
+## 8️⃣ Check Generated Files
+
+```bash
+docker exec -it csv_app ls /app/exports
+```
+
+---
+
+## 9️⃣ Concurrency Test
+
+```bash
+for i in {1..5}; do
+  curl -X POST http://localhost:8080/exports/csv &
+done
+wait
+```
+
+Check:
+
+```bash
+docker exec -it csv_db psql -U exporter -d exports_db -c "SELECT status, COUNT(*) FROM exports GROUP BY status;"
+```
+
+---
+
+## 🔟 Restart Test
+
+```bash
+docker compose restart
+```
+
+---
+
+## 1️⃣1️⃣ Error Handling
+
+```bash
+curl -X POST "http://localhost:8080/exports/csv?columns=invalid"
+```
+
+---
+
+#  How Background Worker Works
+
+1. Polls DB periodically
+2. Locks one pending job
+3. Marks job as processing
+4. Streams data in batches
+5. Updates progress
+6. Supports cancellation
+7. Marks job completed
+
+---
+
+#  Database Tables
+
+## users
+
+* Large dataset (1M rows)
+
+## exports
+
+* job status
+* progress
+* file path
+* error
+
+---
+
+#  Docker Details
 
 ### Services
 
-**db** → PostgreSQL with seed scripts  
-**app** → Node.js API + worker  
+* db → PostgreSQL
+* app → Node.js API + worker
 
-### Persistent Volumes
+### Volumes
 
-* Database data  
-* Generated CSV files  
-
----
-
-# Requirements Covered
-
-✔ Async export API  
-✔ Large dataset handling (1M rows)  
-✔ Background worker queue  
-✔ Concurrency control  
-✔ Progress tracking  
-✔ Cancel support  
-✔ CSV download  
-✔ Dockerized setup  
-✔ Health endpoint  
-✔ Production‑safe streaming  
-✔ Error handling  
-✔ Clean architecture  
+* DB data
+* CSV exports
 
 ---
-
-# Future Improvements
-
-* Redis + BullMQ queue  
-* Multiple worker containers (horizontal scaling)  
-* S3 storage for CSV files  
-* Authentication & rate limiting  
-* Export filters & pagination  
