@@ -10,12 +10,19 @@ const MAX_CONCURRENT = 2;
 let running = 0;
 
 /**
- * Safe column whitelist
+ * Allowed columns (prevents SQL injection)
  */
-const ALLOWED_COLUMNS = ["id", "name", "email", "country_code", "subscription_tier", "lifetime_value"];
+const ALLOWED_COLUMNS = [
+  "id",
+  "name",
+  "email",
+  "country_code",
+  "subscription_tier",
+  "lifetime_value",
+];
 
 /**
- * Process job
+ * Process a single export job
  */
 async function processJob(job) {
   const client = await pool.connect();
@@ -24,27 +31,28 @@ async function processJob(job) {
   const filePath = path.join(EXPORT_DIR, `${job.id}.csv`);
 
   try {
-    // ✅ parse filters safely
+    // ✅ Parse filters safely
     let filters = {};
     try {
       filters = job.filters ? JSON.parse(job.filters) : {};
-    } catch (e) {
+    } catch {
       console.error("Invalid filters JSON");
     }
 
-    // ✅ sanitize columns
+    // ✅ Validate selected columns
     let selectedColumns = job.columns
-      ? job.columns.split(",").filter(c => ALLOWED_COLUMNS.includes(c))
+      ? job.columns.split(",").filter((c) => ALLOWED_COLUMNS.includes(c))
       : ["id", "name", "email"];
 
     if (selectedColumns.length === 0) {
       selectedColumns = ["id", "name", "email"];
     }
 
-    // total count for progress
+    // ✅ Total count for progress
     const countRes = await client.query(`SELECT COUNT(*) FROM users`);
     const total = parseInt(countRes.rows[0].count, 10);
 
+    // CSV setup
     const csvStream = stringify({
       header: true,
       columns: selectedColumns,
@@ -57,19 +65,23 @@ async function processJob(job) {
     let processed = 0;
 
     while (true) {
-      // 🔴 cancel check
+      // 🔴 Cancel check
       const cancelCheck = await client.query(
         `SELECT status FROM exports WHERE id=$1`,
         [job.id]
       );
 
       if (cancelCheck.rows[0].status === "cancelled") {
+        console.log("Cancelled:", job.id);
         csvStream.end();
         if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
         return;
       }
 
-      // ✅ SAFE dynamic query
+      // 🔥 Delay (important for demo & cancel reliability)
+      await new Promise((r) => setTimeout(r, 50));
+
+      // ✅ Build safe query
       let query = `
         SELECT ${selectedColumns.join(",")}
         FROM users
@@ -101,6 +113,7 @@ async function processJob(job) {
 
       if (res.rows.length === 0) break;
 
+      // write rows
       for (const row of res.rows) {
         csvStream.write(row);
       }
@@ -108,7 +121,6 @@ async function processJob(job) {
       lastId = res.rows[res.rows.length - 1].id;
       processed += res.rows.length;
 
-      // ✅ correct progress
       const progress = Math.floor((processed / total) * 100);
 
       await client.query(
@@ -118,9 +130,9 @@ async function processJob(job) {
     }
 
     csvStream.end();
-    await new Promise((r) => writeStream.on("finish", r));
+    await new Promise((resolve) => writeStream.on("finish", resolve));
 
-    // final cancel check
+    // 🔴 Final cancel check
     const finalCheck = await client.query(
       `SELECT status FROM exports WHERE id=$1`,
       [job.id]
@@ -131,6 +143,7 @@ async function processJob(job) {
       return;
     }
 
+    // ✅ Mark completed
     await client.query(
       `UPDATE exports
        SET status='completed', progress=100, file_path=$1, updated_at=NOW()
@@ -157,10 +170,10 @@ async function processJob(job) {
 }
 
 /**
- * Worker loop (atomic claim)
+ * Worker loop (atomic job claiming)
  */
 async function startWorker() {
-  console.log("Worker started...");
+  console.log("Export worker started...");
 
   setInterval(async () => {
     if (running >= MAX_CONCURRENT) return;
@@ -194,7 +207,7 @@ async function startWorker() {
 
       await client.query("COMMIT");
 
-      processJob(job); // async
+      processJob(job); // async (non-blocking)
     } catch (err) {
       await client.query("ROLLBACK");
       console.error("Worker error:", err);
